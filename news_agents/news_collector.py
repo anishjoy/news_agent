@@ -90,12 +90,40 @@ class NewsCollectorAgent:
             logger.error(f"Error scraping Google News for {company}: {e}")
             return f"Error scraping Google News for {company}: {e}"
     
-    def calculate_relevance_score(self, title: str, snippet: str) -> float:
+    def calculate_relevance_score(self, title: str, snippet: str, company: str = "") -> float:
         """Calculate relevance score for an article based on title and snippet."""
         try:
             score = 0.0
             content = f"{title} {snippet}".lower()
             title_lower = title.lower()
+            
+            # First, check if the article is actually about the specific company
+            # This is crucial to avoid generic articles about storage, Samsung, etc.
+            if company:
+                company_mentions = 0
+                
+                # Check for exact company name mentions
+                if company.lower() in content:
+                    company_mentions += 1
+                    score += 2.0  # Base score for company mention
+                
+                # Check for company with common suffixes
+                company_variations = [
+                    f"{company.lower()} inc",
+                    f"{company.lower()} corp", 
+                    f"{company.lower()} company",
+                    f"{company.lower()} stock",
+                    f"{company.lower()} ticker"
+                ]
+                
+                for variation in company_variations:
+                    if variation in content:
+                        company_mentions += 1
+                        score += 1.5
+                
+                # If no company mentions, this is likely a generic article - heavily penalize
+                if company_mentions == 0:
+                    return 0.0  # Reject articles that don't mention the company
             
             # High-impact leadership changes (highest priority)
             leadership_keywords = ['ceo', 'cfo', 'cto', 'president', 'chairman', 'founder', 'co-founder']
@@ -212,9 +240,11 @@ class NewsCollectorAgent:
                 to_date = datetime.now()
                 from_date = to_date - timedelta(days=1)
                 
-                # Search for company news
+                # Search for company news with more specific query
+                # Use quotes to search for exact company name and add context
+                search_query = f'"{company}" OR "{company} Inc" OR "{company} Corp" OR "{company} stock" OR "{company} earnings" OR "{company} CEO"'
                 articles = self.newsapi.get_everything(
-                    q=company,
+                    q=search_query,
                     from_param=from_date.strftime('%Y-%m-%d'),
                     to=to_date.strftime('%Y-%m-%d'),
                     language='en',
@@ -241,8 +271,10 @@ class NewsCollectorAgent:
             try:
                 import feedparser
                 
-                # Google News RSS URL
-                query = company.replace(' ', '+')
+                # Google News RSS URL with more specific query
+                # Use quotes and add context to avoid generic matches
+                query = f'"{company}" OR "{company} Inc" OR "{company} Corp" OR "{company} stock" OR "{company} earnings"'
+                query = query.replace(' ', '+')
                 rss_url = f"https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
                 
                 feed = feedparser.parse(rss_url)
@@ -267,7 +299,8 @@ class NewsCollectorAgent:
             for article in all_articles:
                 relevance_score = self.calculate_relevance_score(
                     article.get('title', ''), 
-                    article.get('snippet', '')
+                    article.get('snippet', ''),
+                    company
                 )
                 if relevance_score >= 3.0:
                     article['relevance_score'] = relevance_score
