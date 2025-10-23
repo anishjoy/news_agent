@@ -1,0 +1,27 @@
+companies:
+  - name: "Prologis"
+  - name: "Doordash"
+  - name: "Extra Space Storage"
+  - name: "Micron"
+
+email:
+  recipient: "anishjoy@gmail.com"
+  sender: "anishjoy@gmail.com"
+
+priorities:
+  - "AI"
+  - "Artificial Intelligence"
+  - "Machine Learning"
+  - "leadership change"
+  - "CEO"
+  - "executive"
+  - "stock price"
+  - "earnings"
+  - "partnership"
+  - "acquisition"
+  - "merger"
+  - "layoffs"
+  - "hiring"
+  - "funding"
+  - "investment"
+
