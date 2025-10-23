@@ -27,17 +27,37 @@ _storage_results = {}
 def collect_news_for_company(company: str) -> str:
     """Collect news for a specific company using direct API calls."""
     try:
+        import time
+        import requests
         from news_agents.news_collector import NewsCollectorAgent
-        collector = NewsCollectorAgent()
         
-        # Use the working method that collects real articles
-        articles = collector.collect_news_for_company(company)
+        # Add retry logic for connection issues
+        max_retries = 3
+        retry_delay = 2
         
-        # Store in global state
-        _collected_articles[company] = articles
-        
-        logger.info(f"Collected {len(articles)} articles for {company}")
-        return f"Successfully collected {len(articles)} articles for {company}"
+        for attempt in range(max_retries):
+            try:
+                collector = NewsCollectorAgent()
+                
+                # Use the working method that collects real articles
+                articles = collector.collect_news_for_company(company)
+                
+                # Store in global state
+                _collected_articles[company] = articles
+                
+                logger.info(f"Collected {len(articles)} articles for {company}")
+                return f"Successfully collected {len(articles)} articles for {company}"
+                
+            except requests.exceptions.ConnectionError as e:
+                logger.warning(f"Connection error on attempt {attempt + 1} for {company}: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay * (attempt + 1))
+                    continue
+                else:
+                    raise
+            except Exception as e:
+                logger.error(f"Error collecting news for {company}: {e}")
+                return f"Error collecting news for {company}: {e}"
         
     except Exception as e:
         logger.error(f"Error collecting news for {company}: {e}")
@@ -333,6 +353,7 @@ class ProductionNewsAgentSystem:
             start_time = time.time()
             
             all_results = {}
+            successful_companies = 0
             
             # Process each company through the full agent pipeline
             for company in self.companies:
@@ -383,6 +404,7 @@ class ProductionNewsAgentSystem:
                         'deduplication': dedup_result,
                         'storage': storage_result
                     }
+                    successful_companies += 1
                     
                 except Exception as e:
                     logger.error(f"❌ Error processing {company}: {e}")
@@ -391,34 +413,109 @@ class ProductionNewsAgentSystem:
             # Step 4: Email Agent (for all companies)
             logger.info("📧 Step 4: Sending consolidated email summary")
             recipient_email = self.config.get('email', {}).get('recipient', 'anishjoy@gmail.com')
-            email_input = f"""
-            Send a consolidated news summary for companies: {', '.join(self.companies)}.
-            Recipient email: {recipient_email}
-            Create a compelling subject line and format the content professionally.
-            Focus on high-impact news and AI-related content.
-            """
             
-            email_result = Runner.run_sync(self.email_agent, email_input)
-            logger.info("✅ Email summary sent")
+            # Create a summary email even if some companies failed
+            if successful_companies > 0:
+                email_input = f"""
+                Send a consolidated news summary for companies: {', '.join(self.companies)}.
+                Recipient email: {recipient_email}
+                Create a compelling subject line and format the content professionally.
+                Focus on high-impact news and AI-related content.
+                Note: {successful_companies} companies processed successfully.
+                """
+            else:
+                email_input = f"""
+                Send an error notification email.
+                Recipient email: {recipient_email}
+                Subject: News Agent System - Processing Errors
+                Content: All companies failed to process due to connection errors.
+                Please check the system logs for details.
+                """
+            
+            try:
+                email_result = Runner.run_sync(self.email_agent, email_input)
+                logger.info("✅ Email summary sent")
+            except Exception as e:
+                logger.error(f"❌ Error sending email: {e}")
+                email_result = f"Email sending failed: {e}"
             
             execution_time = time.time() - start_time
             
-            logger.info(f"🎉 Pipeline completed successfully in {execution_time:.2f} seconds")
-            
-            return {
-                'success': True,
-                'execution_time': execution_time,
-                'results': all_results,
-                'email_result': email_result
-            }
+            if successful_companies > 0:
+                logger.info(f"🎉 Pipeline completed with {successful_companies} companies processed in {execution_time:.2f} seconds")
+                return {
+                    'success': True,
+                    'execution_time': execution_time,
+                    'successful_companies': successful_companies,
+                    'results': all_results,
+                    'email_result': email_result
+                }
+            else:
+                logger.error(f"❌ Pipeline failed - no companies processed successfully")
+                return {
+                    'success': False,
+                    'error': 'All companies failed to process',
+                    'execution_time': execution_time,
+                    'successful_companies': 0,
+                    'results': all_results,
+                    'email_result': email_result
+                }
             
         except Exception as e:
             logger.error(f"❌ Error in pipeline execution: {e}")
             return {
                 'success': False,
                 'error': str(e),
-                'execution_time': 0
+                'execution_time': 0,
+                'successful_companies': 0
             }
+
+def test_connections():
+    """Test API connections before running the main pipeline."""
+    try:
+        logger.info("🔍 Testing API connections...")
+        
+        # Test OpenAI connection
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[{"role": "user", "content": "Test"}],
+                max_tokens=5
+            )
+            logger.info("✅ OpenAI connection successful")
+        except Exception as e:
+            logger.error(f"❌ OpenAI connection failed: {e}")
+            return False
+        
+        # Test NewsAPI connection
+        try:
+            from newsapi import NewsApiClient
+            newsapi = NewsApiClient(api_key=os.getenv("NEWS_API_KEY"))
+            response = newsapi.get_everything(q="test", page_size=1)
+            logger.info("✅ NewsAPI connection successful")
+        except Exception as e:
+            logger.error(f"❌ NewsAPI connection failed: {e}")
+            return False
+        
+        # Test Pinecone connection
+        try:
+            from utils.pinecone_client import PineconeClient
+            pc = PineconeClient()
+            # Test with a simple query
+            test_results = pc.query_similar("test", "test_company", top_k=1)
+            logger.info("✅ Pinecone connection successful")
+        except Exception as e:
+            logger.error(f"❌ Pinecone connection failed: {e}")
+            return False
+        
+        logger.info("✅ All API connections successful")
+        return True
+        
+    except Exception as e:
+        logger.error(f"❌ Connection test failed: {e}")
+        return False
 
 def main():
     """Main entry point for GitHub Actions."""
@@ -438,6 +535,11 @@ def main():
             return 1
         
         logger.info("✅ All environment variables present")
+        
+        # Test connections first
+        if not test_connections():
+            logger.error("❌ Connection tests failed - aborting pipeline")
+            return 1
         
         # Initialize system
         system = ProductionNewsAgentSystem()
