@@ -3,12 +3,51 @@
 from typing import List, Dict, Any
 from datetime import datetime
 import logging
+import html as html_module
+import re
 
 logger = logging.getLogger(__name__)
 
 class EmailFormatter:
     def __init__(self, priorities: List[str]):
         self.priorities = priorities
+    
+    def _clean_html_content(self, content: str) -> str:
+        """Clean and escape HTML content to prevent issues in email."""
+        if not content:
+            return ""
+        
+        # Remove HTML tags and decode entities
+        content = re.sub(r'<[^>]+>', '', content)
+        content = html_module.unescape(content)
+        
+        # Clean up extra whitespace
+        content = re.sub(r'\s+', ' ', content).strip()
+        
+        # Truncate if too long
+        if len(content) > 300:
+            content = content[:300] + "..."
+        
+        return content
+    
+    def _format_date(self, date_str: str) -> str:
+        """Format date string for display."""
+        if not date_str or date_str == 'Unknown date':
+            return 'Recent'
+        
+        try:
+            # Try to parse and format the date
+            from datetime import datetime
+            # Handle various date formats
+            for fmt in ['%Y-%m-%dT%H:%M:%SZ', '%Y-%m-%d %H:%M:%S', '%Y-%m-%d']:
+                try:
+                    dt = datetime.strptime(date_str[:19], fmt)
+                    return dt.strftime('%b %d, %Y')
+                except:
+                    continue
+            return 'Recent'
+        except:
+            return 'Recent'
     
     def calculate_priority_score(self, article: Dict[str, Any]) -> float:
         """Calculate priority score based on keywords and content."""
@@ -109,17 +148,28 @@ class EmailFormatter:
                 priority_class = "high-priority" if priority_score >= 5.0 else ""
                 priority_badge = '<span class="priority-badge">🔥 HIGH PRIORITY</span>' if priority_score >= 5.0 else ""
                 
+                # Clean and escape content
+                title = self._clean_html_content(article.get('title', 'No title'))
+                snippet = self._clean_html_content(article.get('snippet', 'No summary available'))
+                url = article.get('url', '#')
+                published_date = self._format_date(article.get('published_date', 'Unknown date'))
+                
+                # Escape HTML content
+                escaped_title = html_module.escape(title)
+                escaped_url = html_module.escape(url)
+                escaped_snippet = html_module.escape(snippet)
+                
                 html += f"""
                 <div class="article {priority_class}">
                     <div class="article-title">
-                        {article.get('title', 'No title')} {priority_badge}
+                        {escaped_title} {priority_badge}
                     </div>
                     <div class="article-meta">
-                        📅 {article.get('published_date', 'Unknown date')} | 
-                        🔗 <a href="{article.get('url', '#')}" class="article-link">Read Full Article</a>
+                        📅 {published_date} | 
+                        🔗 <a href="{escaped_url}" class="article-link">Read Full Article</a>
                     </div>
                     <div class="article-snippet">
-                        {article.get('snippet', 'No summary available')}
+                        {escaped_snippet}
                     </div>
                 </div>
                 """
